@@ -1,0 +1,197 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
+    require_once __DIR__ . '/../vendor/autoload.php';
+} else {
+    require_once __DIR__ . '/../src/autoload.php';
+}
+
+use EidCloud\PhpBench\BenchmarkLab;
+
+function printBanner(): void {
+    echo "\033[1;36m";
+    echo "=================================================================\n";
+    echo "  ⚡ EIDCLOUD-PHP-BENCH - Objective PHP Performance Harness\n";
+    echo "=================================================================\n";
+    echo "\033[0m";
+}
+
+function printHelp(): void {
+    printBanner();
+    echo <<<HELP
+Usage:
+  php bin/eidcloud-php-bench [command] [options]
+
+Commands:
+  run       Run performance benchmarks (micro-benchmarks & optional target load test)
+  report    Generate or render HTML Chart report from benchmark results
+  compare   Print multi-runtime performance comparison matrix
+  help, -h  Show this help screen
+
+Options for 'run':
+  --target=<url>          Target HTTP endpoint to load test (e.g. http://localhost:8000)
+  --concurrency=<int>     Concurrent worker connections (default: 20)
+  --requests=<int>        Total requests to dispatch (default: 500)
+  --html=<filename>       Auto-export interactive HTML report (default: bench_report.html)
+  --json=<filename>       Export raw benchmark telemetry to JSON file
+
+Options for 'report':
+  --json=<filename>       Input JSON benchmark file (default: benchmark_results.json)
+  --html=<filename>       Target HTML report path (default: bench_report.html)
+
+Examples:
+  php bin/eidcloud-php-bench run
+  php bin/eidcloud-php-bench run --target=http://localhost:8000 --concurrency=50 --requests=2000
+  php bin/eidcloud-php-bench run --html=my_report.html
+  php bin/eidcloud-php-bench compare
+  php bin/eidcloud-php-bench report --html=bench_report.html
+
+HELP;
+}
+
+$args = array_slice($argv, 1);
+$command = $args[0] ?? 'help';
+
+if (in_array($command, ['-h', '--help', 'help'], true) || empty($args)) {
+    printHelp();
+    exit(0);
+}
+
+// Parse command line arguments into key-value map
+$options = [];
+foreach ($args as $arg) {
+    if (str_starts_with($arg, '--')) {
+        $parts = explode('=', substr($arg, 2), 2);
+        $options[$parts[0]] = $parts[1] ?? true;
+    }
+}
+
+$lab = new BenchmarkLab();
+
+switch ($command) {
+    case 'compare':
+        printBanner();
+        echo "\033[1;33m>>> Multi-Runtime Comparison Matrix (PHP-CLI vs PHP-FPM vs Swoole vs RoadRunner vs FrankPHP):\033[0m\n\n";
+        $results = EidCloud\PhpBench\Runtime\MultiRuntimeComparator::computeRelativePerformanceIndex();
+        printf("%-14s | %-12s | %-12s | %-12s | %-12s | %-10s\n", "Runtime", "Max RPS", "Avg Latency", "Mem/Req", "Speedup", "Efficiency");
+        echo str_repeat('-', 85) . "\n";
+        foreach ($results as $name => $item) {
+            printf(
+                "%-14s | %-12s | %-12s | %-12s | %-12s | %-10s\n",
+                $name,
+                number_format($item['rps']) . " rps",
+                $item['avg_latency_ms'] . " ms",
+                $item['memory_kb'] . " KB",
+                $item['speedup_vs_fpm'],
+                $item['efficiency_score']
+            );
+        }
+        echo "\n";
+        break;
+
+    case 'report':
+        printBanner();
+        $jsonFile = (string)($options['json'] ?? 'benchmark_results.json');
+        $htmlFile = (string)($options['html'] ?? 'bench_report.html');
+
+        if (file_exists($jsonFile)) {
+            $data = json_decode(file_get_contents($jsonFile), true);
+            echo "Loaded metrics from: {$jsonFile}\n";
+        } else {
+            echo "No existing JSON metrics found at {$jsonFile}. Executing benchmark run first...\n";
+            $data = $lab->runSuite();
+        }
+
+        $lab->generateHtmlReport($htmlFile, $data);
+        echo "\033[1;32m✓ Standalone HTML Chart report generated successfully:\033[0m {$htmlFile}\n\n";
+        break;
+
+    case 'run':
+        printBanner();
+        $target = isset($options['target']) ? (string)$options['target'] : null;
+        $concurrency = isset($options['concurrency']) ? (int)$options['concurrency'] : 20;
+        $requests = isset($options['requests']) ? (int)$options['requests'] : 500;
+        $htmlFile = isset($options['html']) ? (string)$options['html'] : 'bench_report.html';
+        $jsonFile = isset($options['json']) ? (string)$options['json'] : null;
+
+        echo "Initializing benchmark suite...\n";
+        echo "PHP Version: " . PHP_VERSION . "\n";
+        if ($target) {
+            echo "Target URL: {$target} | Concurrency: {$concurrency} | Total Requests: {$requests}\n";
+        } else {
+            echo "Mode: Micro-benchmarks & Runtime Architectural Lab\n";
+        }
+        echo str_repeat('-', 65) . "\n\n";
+
+        $results = $lab->runSuite(
+            $target,
+            $concurrency,
+            $requests,
+            function (string $event, mixed $data) {
+                switch ($event) {
+                    case 'micro_cold_boot_start':
+                        echo "[1/4] Measuring PHP cold-boot startup time... ";
+                        break;
+                    case 'micro_cold_boot_done':
+                        echo "Done ({$data['avg_ms']} ms avg)\n";
+                        break;
+                    case 'micro_json_start':
+                        echo "[2/4] Benchmarking JSON serialization & parsing throughput... ";
+                        break;
+                    case 'micro_json_done':
+                        echo "Done (" . number_format($data['encode_ops_sec']) . " ops/s encode)\n";
+                        break;
+                    case 'micro_routing_start':
+                        echo "[3/4] Testing regex URL routing latency... ";
+                        break;
+                    case 'micro_routing_done':
+                        echo "Done (" . number_format($data['ops_per_second']) . " ops/s)\n";
+                        break;
+                    case 'micro_db_start':
+                        echo "[4/4] Profiling SQLite in-memory database throughput... ";
+                        break;
+                    case 'micro_db_done':
+                        if ($data['supported'] ?? false) {
+                            echo "Done (" . number_format($data['insert_ops_sec']) . " inserts/s)\n";
+                        } else {
+                            echo "Skipped (pdo_sqlite not loaded)\n";
+                        }
+                        break;
+                    case 'load_test_start':
+                        echo "\nDispatching concurrent non-blocking load requests to target...\n";
+                        break;
+                    case 'load_test_progress':
+                        if ($data['completed'] % 100 === 0 || $data['completed'] === $data['total']) {
+                            $pct = round(($data['completed'] / $data['total']) * 100);
+                            printf("\rProgress: [%-20s] %d%% (%d/%d)", str_repeat('=', (int)($pct / 5)), $pct, $data['completed'], $data['total']);
+                        }
+                        break;
+                    case 'load_test_done':
+                        echo "\n\033[1;32m✓ Load test completed:\033[0m {$data['requests_per_second']} RPS | Avg Latency: {$data['latency']['avg_ms']} ms\n";
+                        break;
+                }
+            }
+        );
+
+        echo "\n" . str_repeat('-', 65) . "\n";
+        echo "\033[1;32m✓ Benchmark Suite Finished Successfully!\033[0m\n";
+
+        // Save HTML report
+        $lab->generateHtmlReport($htmlFile, $results);
+        echo "📄 Interactive HTML Chart Report: \033[1;34m{$htmlFile}\033[0m\n";
+
+        // Save JSON file if requested
+        if ($jsonFile !== null) {
+            file_put_contents($jsonFile, json_encode($results, JSON_PRETTY_PRINT));
+            echo "💾 Raw Telemetry JSON: \033[1;34m{$jsonFile}\033[0m\n";
+        }
+        echo "\n";
+        break;
+
+    default:
+        echo "Unknown command: '{$command}'. Run with --help for options.\n";
+        exit(1);
+}

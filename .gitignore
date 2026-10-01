@@ -1,0 +1,16 @@
+/vendor/
+composer.lock
+.phpunit.cache
+.phpunit.result.cache
+.env
+.env.local
+.env.*.local
+*.log
+bench_report.html
+bench_report_*.html
+benchmark_results_*.json
+*.tmp
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

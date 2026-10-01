@@ -1,0 +1,12 @@
+{
+  "description": "Objective PHP runtime and framework benchmarking harness measuring RPS, latency, and memory with HTML charts in pure PHP",
+  "topics": [
+    "eidcloud",
+    "php-benchmark",
+    "framework-bench",
+    "runtime-performance",
+    "load-testing",
+    "latency-profiler",
+    "php8"
+  ]
+}
